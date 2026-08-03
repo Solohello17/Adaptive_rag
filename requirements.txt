@@ -16,6 +16,7 @@ pypdf>=4.2.0
 langchain-qdrant>=0.1.0
 langchain-text-splitters>=0.2.0
 python-multipart>=0.0.7
-
-
-
+langchain-tavily>=0.2.18
+aiofiles>=23.2.1
+langchain-groq
+langchain-nvidia-ai-endpoints

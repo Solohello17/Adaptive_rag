@@ -1,6 +1,7 @@
 import os
 import io
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -10,6 +11,9 @@ from langchain_qdrant import QdrantVectorStore
 from app.database import init_qdrant_collections, save_document_metadata, get_qdrant_client
 from app.llm import get_embeddings
 from app.graph import rag_app
+
+# Triggering uvicorn hot-reload to pick up .env changes
+
 
 app = FastAPI(title="Adaptive RAG - Layer 1")
 
@@ -87,24 +91,57 @@ async def upload_document(
         "chunks": len(documents)
     }
 
+from typing import List, Optional
+
 class QueryRequest(BaseModel):
     question: str
 
-@app.post("/query")
+class Step(BaseModel):
+    name: str
+    detail: str
+
+class QueryResponse(BaseModel):
+    answer: str
+    route: str
+    documents_found: Optional[int] = None
+    documents_kept: Optional[int] = None
+    grounded: Optional[bool] = None
+    retry_count: int
+    failed: bool
+    steps: List[Step]
+
+@app.post("/query", response_model=QueryResponse)
 async def query_graph(request: QueryRequest):
     """
     Execute the LangGraph workflow to retrieve context and generate an answer.
     """
     try:
-        # We start the graph by providing the initial state
         initial_state = {"question": request.question}
-        
-        # Invoke the compiled graph
         result = rag_app.invoke(initial_state)
         
-        return {
-            "question": result["question"],
-            "answer": result["generation"]
-        }
+        retry_count = result.get("retry_count", 0)
+        route = result.get("route", "")
+        documents = result.get("documents", [])
+        
+        # Determine if the query failed
+        failed = False
+        if retry_count >= 2:
+            failed = True
+        elif route != "general_knowledge" and not documents:
+            failed = True
+            
+        return QueryResponse(
+            answer=result.get("generation", ""),
+            route=route,
+            documents_found=result.get("documents_found"),
+            documents_kept=result.get("documents_kept"),
+            grounded=result.get("grounded"),
+            retry_count=retry_count,
+            failed=failed,
+            steps=[Step(**s) for s in result.get("steps", [])]
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error executing graph: {str(e)}")
+
+# Mount static files (must be after API routes)
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
