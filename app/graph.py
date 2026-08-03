@@ -3,7 +3,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langchain_qdrant import QdrantVectorStore
 from langgraph.graph import START, END, StateGraph
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 
 from app.llm import get_llm, get_embeddings
 from app.database import get_qdrant_client
@@ -30,6 +30,7 @@ class GraphState(TypedDict):
     documents_found: Optional[int]
     documents_kept: Optional[int]
     grounded: Optional[bool]
+    route_decision: Optional[str]
 
 # 2. Node Functions
 def route_question_node(state: GraphState):
@@ -115,10 +116,11 @@ def web_search(state: GraphState):
     documents = state.get("documents", [])
     
     # Web search
-    tool = TavilySearchResults(max_results=3)
-    docs = tool.invoke({"query": question})
-    
-    # Tavily returns a list of dicts: [{"url": "...", "content": "..."}, ...]
+    tool = TavilySearch(max_results=3)
+    response = tool.invoke({"query": question})
+
+    # TavilySearch returns {"results": [{"url": "...", "content": "..."}, ...], ...}
+    docs = response.get("results", [])
     web_results = "\n".join([d["content"] for d in docs])
     
     web_results_doc = Document(page_content=web_results, metadata={"source": "tavily"})
@@ -185,49 +187,63 @@ def generate(state: GraphState):
         
     return {"generation": generation_content, "question": question, "retry_count": retry_count + 1, "steps": steps}
 
-def grade_generation(state: GraphState):
+def check_generation(state: GraphState):
     """
-    Determines whether the generation is grounded in the document and answers question.
+    Node: grades the generation for hallucination and answer quality, writing the
+    results (and the resulting routing decision) into state.
+
+    This used to live inside the conditional-edge function itself, which only ever
+    hands its return value to LangGraph for picking the next node — anything written
+    onto the state object there isn't part of the documented state-update contract
+    (only node return values are merged via reducers). Doing the grading in a real
+    node keeps `grounded` and the routing decision as proper, guaranteed state updates.
     """
     print("--- CHECK HALLUCINATIONS ---")
     question = state["question"]
     documents = state.get("documents", [])
     generation = state["generation"]
     retry_count = state.get("retry_count", 0)
-    steps = state.setdefault("steps", [])
-    
-    # GUARD: Prevent infinite loops
-    # This guard sits at the very beginning of the conditional edge, immediately after a generation occurs.
-    # If we have hit the retry limit (2), we forcefully route to END, skipping the grader checks entirely.
+    steps = state.get("steps", [])
+
+    # GUARD: Prevent infinite loops. If we've hit the retry limit, skip grading
+    # entirely (no more LLM calls) and force an end.
     if retry_count >= 2:
         print("--- RETRY LIMIT REACHED, ENDING ---")
-        steps.append({"name": "retry limit", "detail": "stopped after 2 retries"})
-        return "end"
+        steps = steps + [{"name": "retry limit", "detail": "stopped after 2 retries"}]
+        return {"steps": steps, "route_decision": "end"}
 
     # Only grade hallucinations if we actually have documents.
+    grounded = None
     if documents:
         context = "\n\n".join(doc.page_content for doc in documents)
         score = grade_hallucination(context, generation)
-        
-        if score == "no":
+        grounded = score == "yes"
+
+        if not grounded:
             print("--- DECISION: not grounded, RETRY GENERATE ---")
-            state["grounded"] = False
-            steps.append({"name": "grounding check", "detail": "failed, regenerating"})
-            return "generate"
-        else:
-            state["grounded"] = True
-            steps.append({"name": "grounding check", "detail": "passed"})
-    
+            steps = steps + [{"name": "grounding check", "detail": "failed, regenerating"}]
+            return {"grounded": grounded, "steps": steps, "route_decision": "generate"}
+
+        steps = steps + [{"name": "grounding check", "detail": "passed"}]
+
     print("--- CHECK ANSWER ---")
     score = grade_answer(question, generation)
     if score == "no":
         print("--- DECISION: grounded but unhelpful, WEB SEARCH ---")
-        steps.append({"name": "answer check", "detail": "did not address the question"})
-        return "web_search"
-        
+        steps = steps + [{"name": "answer check", "detail": "did not address the question"}]
+        return {"grounded": grounded, "steps": steps, "route_decision": "web_search"}
+
     print("--- DECISION: answer is good, END ---")
-    steps.append({"name": "answer check", "detail": "passed"})
-    return "end"
+    steps = steps + [{"name": "answer check", "detail": "passed"}]
+    return {"grounded": grounded, "steps": steps, "route_decision": "end"}
+
+
+def route_after_check(state: GraphState) -> str:
+    """
+    Pure router: just reads the decision `check_generation` already wrote into state.
+    Does no grading and mutates nothing — safe to use as a conditional-edge function.
+    """
+    return state["route_decision"]
 
 # 3. Graph Construction
 def build_graph():
@@ -243,6 +259,7 @@ def build_graph():
     workflow.add_node("grade_documents", grade_documents)
     workflow.add_node("web_search", web_search)
     workflow.add_node("generate", generate)
+    workflow.add_node("check_generation", check_generation)
     
     # Define the execution flow (wiring)
     workflow.add_edge(START, "route_question")
@@ -270,9 +287,11 @@ def build_graph():
     )
     workflow.add_edge("web_search", "generate")
     
+    workflow.add_edge("generate", "check_generation")
+
     workflow.add_conditional_edges(
-        "generate",
-        grade_generation,
+        "check_generation",
+        route_after_check,
         {
             "generate": "generate",
             "web_search": "web_search",
