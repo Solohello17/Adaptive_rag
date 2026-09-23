@@ -56,6 +56,40 @@ def get_llm(model_type: str = "smart") -> BaseChatModel:
             temperature=0
         )
         
+    elif provider == "openrouter":
+        from langchain_openai import ChatOpenAI
+
+        # OpenRouter speaks the OpenAI API format, so we reuse ChatOpenAI with a
+        # custom base_url instead of adding a new SDK dependency.
+        #
+        # Model IDs are namespaced as "provider/model-name" (e.g. some carry a
+        # ":free" suffix for free-tier variants, like "meta-llama/llama-3.1-8b-instruct:free").
+        # Copy the exact ID for the model you want from https://openrouter.ai/models --
+        # don't guess it, OpenRouter will 400 on an unrecognized one.
+        class SafeChatOpenRouter(ChatOpenAI):
+            def with_structured_output(self, schema, **kwargs):
+                # ChatOpenAI defaults to method="function_calling" (tool calling), but
+                # OpenRouter fronts many models and support for that varies a lot by
+                # the underlying model -- most free-tier ones don't support it at all.
+                # json_mode is far more broadly supported across OpenRouter's catalog,
+                # and router.py / grader.py already spell out the exact JSON shape they
+                # want in the prompt, so we force it here the same way we do for Groq/NVIDIA.
+                kwargs["method"] = "json_mode"
+                return super().with_structured_output(schema, **kwargs)
+
+        return SafeChatOpenRouter(
+            model=settings.OPENROUTER_MODEL,
+            api_key=settings.OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=0,
+            default_headers={
+                # Optional, but OpenRouter uses these to attribute requests to your
+                # app on its dashboard/leaderboards. Harmless to leave as defaults.
+                "HTTP-Referer": settings.OPENROUTER_SITE_URL,
+                "X-Title": settings.OPENROUTER_APP_NAME,
+            },
+        )
+
     else:
         raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
 

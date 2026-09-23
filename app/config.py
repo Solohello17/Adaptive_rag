@@ -16,7 +16,11 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "llama-3.1-8b-instant"
     NVIDIA_API_KEY: Optional[str] = None
     NVIDIA_MODEL: str = "meta/llama-3.1-70b-instruct"
-    
+    OPENROUTER_API_KEY: Optional[str] = None
+    OPENROUTER_MODEL: str = "meta-llama/llama-3.1-8b-instruct:free"
+    OPENROUTER_SITE_URL: str = "http://localhost:8000"
+    OPENROUTER_APP_NAME: str = "Adaptive RAG"
+
     # Database Configuration
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
