@@ -69,3 +69,24 @@ One entry per step of Phase 4. Each step is one commit on `feature/jev-decision-
 **Tests:** T01 to T07 plus a status-code and a state-size test, 11 in total, all with `httpx.MockTransport`.
 
 **Files:** `app/decisions/jev_client.py`, `scripts/check_jev_models.py`, `tests/unit/test_jev_client.py`
+
+## Step 4: Jev route
+
+**Commit:** `feat(decisions): add Jev route decision`
+
+**What:** `app/decisions/jev_provider.py` with `JevDecisionProvider.route()`. It sends one Choice with state `{"question": ...}` and the five options from the YAML. `unclear`, an unknown option, a missing confidence, or confidence below `JEV_ROUTE_MIN_CONFIDENCE` raise `JevDecisionError`, so the fallback (step 7) can hand that one decision to the LLM. A state longer than `JEV_MAX_STATE_CHARS` is rejected before any call is made.
+
+**Why strict:** the provider never guesses. Every uncertain case becomes a named reason, which is what makes the fallback rate measurable.
+
+**Live sanity check (4 questions, 25 Sept 2026, not the evaluation):**
+
+| Question | Jev result | Confidence | Latency | Input tokens |
+|---|---|---|---|---|
+| subject code for ML in our syllabus | documents | 0.98 | 815 ms | 466 |
+| Hello! How are you today? | general_knowledge | 1 | 471 ms | 460 |
+| current price of Bitcoin | web_search | 1 | 443 ms | 461 |
+| asdkjh qwe zzz | unclear (would fall back) | 0.98 | 484 ms | n/a |
+
+**Tests:** T08 (each route maps, and the exact state and question sent), T09 (`unclear`), T10 (low confidence), T13 (oversized state makes no call), plus unknown-choice and YAML-option checks. 9 tests.
+
+**Files:** `app/decisions/jev_provider.py`, `tests/unit/test_jev_provider.py`
