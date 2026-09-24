@@ -27,3 +27,9 @@ Short, dated entries. Newest at the bottom.
 - Checked the brief's API notes against the live Vercel and TypeSafe docs before designing. Three corrections: answers come back nested under `answers`, `cost` and `marketCost` are strings, and Noul questions accept optional `criteria` for the yes and no cases.
 - Used Noul `criteria` to carry v1's grader rules into Jev word for word, including the "saying the context lacks it counts as grounded" rule that fixed v1's "I don't know" loop.
 - Drafted `02-design.md`: a stack of small wrappers (logging, fallback, Jev, LLM) behind one interface, with the graph itself unchanged.
+
+## 25 Sept 2026: Phase 4, steps 1 and 2
+
+- Design approved. Added the settings and the Jev question wording (step 1).
+- Step 2 moved the three decision nodes behind one interface, with the LLM provider calling the v1 functions unchanged. 18 offline tests pass, including both retry-cap loops.
+- Live check: 5 eval questions in `llm` mode gave the same routes, the same step sequence, and the same grounded and retry values as the v1 baseline. The `?` crash still happens, as expected, since that v1 bug is out of scope.

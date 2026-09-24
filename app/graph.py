@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import List, TypedDict, Dict, Any, Optional, Tuple
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
@@ -8,10 +9,14 @@ from langchain_tavily import TavilySearch
 from app.config import settings
 from app.llm import get_llm, get_embeddings
 from app.database import get_qdrant_client
-from app.router import route_question
-from app.grader import grade_documents_batch, grade_hallucination, grade_answer
+from app.decisions.factory import get_decision_provider
+from app.decisions.base import route_summary, grade_summary, verify_summary
 
 logger = logging.getLogger(__name__)
+
+
+def _ms_since(start: float) -> float:
+    return round((time.perf_counter() - start) * 1000, 1)
 
 # 1. State Definition
 class GraphState(TypedDict):
@@ -35,6 +40,9 @@ class GraphState(TypedDict):
     grounded: Optional[bool]
     route_decision: Optional[str]
     context: Optional[str]
+    # v2: one summary per route / grade / verify decision (who decided, result,
+    # confidence, latency, fallback). Built with the same manual list pattern as steps.
+    decisions: List[Dict[str, Any]]
 
 # 2. Node Functions
 def check_similarity_override(question: str) -> Tuple[Optional[str], float]:
@@ -78,7 +86,12 @@ def route_question_node(state: GraphState):
     """
     print("--- ROUTE ---")
     question = state["question"]
-    datasource = route_question(question)
+    provider = get_decision_provider()
+    start = time.perf_counter()
+    decision = provider.route(question)
+    datasource = decision.route
+    # The summary records the provider's own decision; an override below shows up in steps.
+    decisions = [route_summary(decision, _ms_since(start))]
     steps = [{"name": "route", "detail": f"matches {datasource}"}]
 
     # Probe on every query (~40ms, no LLM call) so the score is always logged
@@ -98,7 +111,7 @@ def route_question_node(state: GraphState):
             })
             datasource = override_route
 
-    return {"route": datasource, "steps": steps, "retry_count": 0}
+    return {"route": datasource, "steps": steps, "retry_count": 0, "decisions": decisions}
 
 def retrieve(state: GraphState):
     """
@@ -149,18 +162,21 @@ def grade_documents(state: GraphState):
     question = state["question"]
     documents = state["documents"]
 
-    verdicts = grade_documents_batch(question, [doc.page_content for doc in documents])
+    provider = get_decision_provider()
+    start = time.perf_counter()
+    grades = provider.grade(question, [doc.page_content for doc in documents])
+    decisions = state.get("decisions", []) + [grade_summary(grades, provider.name, _ms_since(start))]
 
     filtered_docs = []
-    for doc, verdict in zip(documents, verdicts):
-        if verdict == "yes":
+    for doc, grade in zip(documents, grades):
+        if grade.relevant:
             print("--- GRADE: DOCUMENT RELEVANT ---")
             filtered_docs.append(doc)
         else:
             print("--- GRADE: DOCUMENT IRRELEVANT ---")
 
     steps = state.get("steps", []) + [{"name": "grade documents", "detail": f"{len(filtered_docs)} relevant, {len(documents) - len(filtered_docs)} dropped"}]
-    return {"documents": filtered_docs, "question": question, "steps": steps, "documents_kept": len(filtered_docs)}
+    return {"documents": filtered_docs, "question": question, "steps": steps, "documents_kept": len(filtered_docs), "decisions": decisions}
 
 def decide_to_generate(state: GraphState):
     """
@@ -290,33 +306,38 @@ def check_generation(state: GraphState):
         steps = steps + [{"name": "retry limit", "detail": "stopped after 2 retries"}]
         return {"steps": steps, "route_decision": "end"}
 
-    # Only grade hallucinations if the answer was generated from some context.
+    # Both checks come from one provider call. The provider only runs the
+    # grounded check when there is context, and (for the LLM) skips the answer
+    # check once the answer is ungrounded -- the same calls v1 made inline here.
     grounded = None
     logger.debug("Grounding check context: %d chars", len(context))
+    provider = get_decision_provider()
+    start = time.perf_counter()
+    verdict = provider.verify(question, context, generation)
+    decisions = state.get("decisions", []) + [verify_summary(verdict, _ms_since(start))]
+
     if context:
-        score = grade_hallucination(context, generation)
-        grounded = score == "yes"
+        grounded = verdict.grounded
 
         if not grounded:
             print("--- DECISION: not grounded, RETRY GENERATE ---")
             steps = steps + [{"name": "grounding check", "detail": "failed, regenerating"}]
             # A corrective cycle -- counted here, not in generate().
-            return {"grounded": grounded, "steps": steps, "route_decision": "generate", "retry_count": retry_count + 1}
+            return {"grounded": grounded, "steps": steps, "route_decision": "generate", "retry_count": retry_count + 1, "decisions": decisions}
 
         steps = steps + [{"name": "grounding check", "detail": "passed"}]
 
     print("--- CHECK ANSWER ---")
-    score = grade_answer(question, generation)
-    if score == "no":
+    if verdict.answers_question is False:
         print("--- DECISION: grounded but unhelpful, WEB SEARCH ---")
         steps = steps + [{"name": "answer check", "detail": "did not address the question"}]
         # Also a corrective cycle. Without counting it, the answer-check ->
         # web_search -> generate loop has no hard cap (CLAUDE.md rule #4).
-        return {"grounded": grounded, "steps": steps, "route_decision": "web_search", "retry_count": retry_count + 1}
+        return {"grounded": grounded, "steps": steps, "route_decision": "web_search", "retry_count": retry_count + 1, "decisions": decisions}
 
     print("--- DECISION: answer is good, END ---")
     steps = steps + [{"name": "answer check", "detail": "passed"}]
-    return {"grounded": grounded, "steps": steps, "route_decision": "end"}
+    return {"grounded": grounded, "steps": steps, "route_decision": "end", "decisions": decisions}
 
 
 def route_after_check(state: GraphState) -> str:
