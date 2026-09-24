@@ -209,3 +209,26 @@ For comparison, the step 2 `llm` run of the same questions took 2048 to 10006 ms
 **Checked in the browser pane (mock mode):** a documents answer showing `documents · 2/4 docs kept · grounded · jev, 1 fallback` with a grade row reading "1 fell back to llm (rate limited)", and a direct answer with a route that fell back for low confidence. At a 375 px viewport the rows wrap into three columns and the page has no horizontal scroll.
 
 **Files:** `static/index.html`
+
+## Phase 4 gate: tests with both providers
+
+**Unit tests:** the full suite (66 tests) passes with `DECISION_PROVIDER=llm` and with `DECISION_PROVIDER=jev` set in the environment, so no test depends on what `.env` says.
+
+**End to end through the real app (25 Sept 2026):** `POST /query` via FastAPI's TestClient with startup running (real Qdrant, embeddings, LLM, Jev, and MongoDB), one question: q04, "In our solved question bank, what worked example is used to explain IQR, and what IQR does it get?"
+
+| | `llm` mode | `jev` mode |
+|---|---|---|
+| Startup log | decision provider = llm | decision provider = jev |
+| Response fields | the 8 v1 fields plus `decisions` | the same |
+| Route | documents | documents (confidence 0.91) |
+| Chunks kept | 3 of 8 | 5 of 8 |
+| Grounded, retries | True, 0 | True, 0 |
+| Answer | correct: marks 12 to 40, Q1 = 18, Q3 = 33, IQR = 15 | correct, same example and values |
+| Route decision latency | 9797 ms | 967 ms |
+| Grade decision latency (8 chunks) | 2038 ms | 1508 ms |
+| Verify decision latency | 3813 ms | 598 ms |
+| Mongo `decision_logs` written | 10 (1 route, 8 grade, 1 verify), one `request_id` | 10, one `request_id` |
+| Jev market cost, summed from the logs | n/a | 0.000289338 USD (actual cost 0 on the free credit) |
+| Fallbacks | n/a | none |
+
+One question, one run per mode: it confirms that everything is wired together, not how the two compare. The comparison is Phase 5.

@@ -41,3 +41,9 @@ Short, dated entries. Newest at the bottom.
 - Sanity checks worked: gibberish came back `unclear`; the "context does not say" answer scored 0.97 grounded, so v1's "I don't know" loop fix survived the move to Jev.
 - On 5 eval questions the Jev run took the same route and path as v1, with each decision well under a second. The `?` question still crashes: Jev said `unclear` correctly, but the LLM it fell back to has the known v1 JSON bug.
 - Jev's grading is lenient (8 of 8 chunks kept where the LLM kept 7 and 4). Noted for threshold tuning in Phase 5.
+
+## 25 Sept 2026: Phase 4, steps 8 to 10 and the gate
+
+- Every decision now lands in MongoDB with its provider, latency, tokens, cost, and fallback reason, tied together by a per-query id. A test proved the id survives LangGraph's node execution, which I would otherwise have had to assume.
+- `/query` returns a `decisions` list next to the unchanged v1 fields, and the UI trace shows who made each call and when Jev handed one back to the LLM.
+- Gate passed: 66 tests in both modes, and a real end-to-end query answered correctly in both, with 10 decision logs each.
