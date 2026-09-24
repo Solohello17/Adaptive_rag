@@ -1,3 +1,4 @@
+from functools import lru_cache
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
 from app.config import settings
@@ -90,10 +91,53 @@ def get_llm(model_type: str = "smart") -> BaseChatModel:
             },
         )
 
+    elif provider == "omniroute":
+        from langchain_openai import ChatOpenAI
+
+        # OmniRoute is a self-hosted, OpenAI-compatible gateway that runs locally
+        # (Docker/npm, default port 20128) and fronts many providers with its own
+        # auto-fallback and caching. Same trick as the openrouter branch above:
+        # reuse ChatOpenAI with a custom base_url instead of a new SDK dependency.
+        #
+        # Besides normal provider-namespaced model IDs, OmniRoute exposes routing
+        # aliases like "auto/best-fast" or "auto/coding:free" that pick a concrete
+        # model per request. The exact ID must come from the gateway's own catalog
+        # (curl <OMNIROUTE_BASE_URL>/models -H "Authorization: Bearer <key>") --
+        # it's specific to whatever you've connected in the OmniRoute dashboard/CLI,
+        # don't guess it.
+        class SafeChatOmniRoute(ChatOpenAI):
+            def with_structured_output(self, schema, **kwargs):
+                # Verified empirically against a live local OmniRoute instance:
+                # the default method="function_calling" fails silently -- the
+                # "auto/coding:free" alias's /v1/models entry advertises
+                # tool_calling: true, but the concrete model it actually routed
+                # to for a real request ignored the tool schema and answered in
+                # plain prose, which then fails Pydantic validation. method=
+                # "json_mode" worked correctly once paired with the explicit
+                # "respond in JSON with key X" instructions router.py / grader.py
+                # already put in their prompts. Since which model serves any
+                # given request is decided dynamically by OmniRoute's router,
+                # forcing json_mode here is the safer default -- but if you
+                # pin OMNIROUTE_MODEL to a specific model you know supports
+                # function calling, function_calling may work better for it.
+                kwargs["method"] = "json_mode"
+                return super().with_structured_output(schema, **kwargs)
+
+        return SafeChatOmniRoute(
+            model=settings.OMNIROUTE_MODEL,
+            api_key=settings.OMNIROUTE_API_KEY,
+            base_url=settings.OMNIROUTE_BASE_URL,
+            temperature=0,
+        )
+
     else:
         raise ValueError(f"Unsupported LLM_PROVIDER: {provider}")
 
 
+# Cached: building the local sentence-transformers model reloads its weights
+# (~6-13s), while an embed call is ~30ms. settings is read once at import, so
+# the provider can't change mid-process anyway.
+@lru_cache(maxsize=1)
 def get_embeddings() -> Embeddings:
     """
     Factory function to get the configured Embeddings provider.

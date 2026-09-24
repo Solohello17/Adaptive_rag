@@ -73,8 +73,19 @@
   .doc {
     padding: 10px 8px;
     border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px;
   }
   .doc:last-child { border-bottom: none; }
+  .doc-info { flex: 1; min-width: 0; }
+  .doc-delete {
+    flex-shrink: 0;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--muted); background: none;
+    border: 1px solid transparent; border-radius: 4px;
+    padding: 3px 6px; cursor: pointer;
+  }
+  .doc-delete:hover, .doc-delete:focus-visible { color: var(--fail); border-color: var(--line); }
+  .doc-delete:disabled { opacity: .5; cursor: default; }
   .doc-name {
     font-size: 13.5px; font-weight: 500;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -303,8 +314,11 @@ function renderDocs() {
   }
   el.innerHTML = docs.map(d => `
     <div class="doc">
-      <div class="doc-name">${esc(d.name)}</div>
-      <div class="doc-meta">${d.chunks} chunks</div>
+      <div class="doc-info">
+        <div class="doc-name" title="${esc(d.name)}">${esc(d.name)}</div>
+        <div class="doc-meta">${esc(d.chunks)} chunks</div>
+      </div>
+      <button class="doc-delete" data-delete="${esc(d.id)}" aria-label="Delete ${esc(d.name)}">Delete</button>
     </div>`).join('');
 }
 
@@ -435,19 +449,61 @@ async function realQuery(question) {
 
 async function uploadDoc(file) {
   if (MOCK) {
-    docs.push({ name: file.name, chunks: 12 + Math.floor(Math.random() * 30) });
+    docs.push({ id: 'mock-' + Date.now(), name: file.name, chunks: 12 + Math.floor(Math.random() * 30) });
     renderDocs();
     return;
   }
   const fd = new FormData();
   fd.append('file', file);
-  await fetch(API + '/rag/documents/upload', {
+  const res = await fetch(API + '/rag/documents/upload', {
     method: 'POST',
     headers: { 'X-Description': file.name },
     body: fd
   });
-  docs.push({ name: file.name, chunks: '—' });
+  const data = await res.json();
+  if (!res.ok) {
+    alert(data.detail || `Upload failed (${res.status})`);
+    return;
+  }
+  docs.push({ id: data.doc_id, name: data.filename ?? file.name, chunks: data.chunks ?? '—' });
   renderDocs();
+}
+
+async function deleteDoc(id, button) {
+  const d = docs.find(x => x.id === id);
+  if (!d) return;
+  if (!confirm(`Delete "${d.name}"?\n\nIts ${d.chunks} chunks will be removed from the knowledge base. This can't be undone.`)) return;
+
+  if (!MOCK) {
+    button.disabled = true;
+    button.textContent = 'Deleting…';
+    const res = await fetch(API + '/rag/documents/' + encodeURIComponent(id), { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.detail || `Delete failed (${res.status})`);
+      button.disabled = false;
+      button.textContent = 'Delete';
+      return;
+    }
+  }
+  docs.splice(docs.indexOf(d), 1);
+  renderDocs();
+}
+
+/* Repopulate the knowledge-base list from MongoDB on page load, so
+   previously uploaded documents show up after a refresh instead of only
+   within the current browser session. */
+async function loadDocs() {
+  if (MOCK) return;
+  try {
+    const res = await fetch(API + '/rag/documents');
+    if (!res.ok) return;
+    const data = await res.json();
+    docs.push(...data.map(d => ({ id: d.id, name: d.filename, chunks: d.chunk_count ?? '—' })));
+    renderDocs();
+  } catch (e) {
+    // Backend not reachable yet -- leave the list empty rather than failing the page.
+  }
 }
 
 /* =============================================================
@@ -515,6 +571,10 @@ document.getElementById('send').onclick = () => {
 document.getElementById('input').onkeydown = e => {
   if (e.key === 'Enter') document.getElementById('send').click();
 };
+document.getElementById('docList').onclick = e => {
+  const btn = e.target.closest('[data-delete]');
+  if (btn) deleteDoc(btn.dataset.delete, btn);
+};
 document.getElementById('fileInput').onchange = e => {
   if (e.target.files[0]) uploadDoc(e.target.files[0]);
 };
@@ -527,6 +587,7 @@ const drop = document.getElementById('drop');
 
 renderDocs();
 renderThread();
+loadDocs();
 </script>
 </body>
 </html>
