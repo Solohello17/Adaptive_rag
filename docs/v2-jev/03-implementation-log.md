@@ -185,3 +185,15 @@ For comparison, the step 2 `llm` run of the same questions took 2048 to 10006 ms
 **Tests:** T19 (one document per decision with request id and app version, fallback reason and attempt kept, previews capped, decisions returned unchanged, dead Mongo swallowed, empty grade writes nothing), contextvar through LangGraph, and the factory wrapping. 7 new tests, 63 in total.
 
 **Files:** `app/decisions/decision_log.py`, `app/decisions/factory.py`, `tests/unit/test_decision_log.py`, `tests/unit/test_factory_and_summaries.py`, `tests/unit/test_fallback.py`
+
+## Step 9: `decisions` in the `/query` response
+
+**Commit:** `feat(api): return per-decision summaries from /query`
+
+**What:** `QueryResponse` in `app/main.py` gains one optional field, `decisions`: a list of `DecisionSummary` (decision, provider, result, confidence, latency, fallback reason, and a fallback count for grading). Every existing field keeps its name and meaning. `/query` also sets a fresh `request_id` (a UUID) in the contextvar before running the graph and resets it afterwards, so all decision logs from one query share an id.
+
+**Why a UUID and not `new_document_id()`:** both are UUID4, but reusing a function named after documents for request ids would mislead the next reader.
+
+**Tests:** T25 (response has exactly the v1 fields plus `decisions`, with v1 values unchanged), a state with no decisions returns an empty list, and each query gets its own request id that is reset afterwards. The graph is stubbed and startup does not run. 3 new tests, 66 in total.
+
+**Files:** `app/main.py`, `tests/unit/test_api_query.py`
