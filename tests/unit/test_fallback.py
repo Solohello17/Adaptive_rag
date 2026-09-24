@@ -125,6 +125,7 @@ def test_non_jev_errors_are_not_swallowed():
 @pytest.fixture
 def fresh_factory(monkeypatch):
     factory._build_from_settings.cache_clear()
+    monkeypatch.setattr(factory.settings, "JEV_LOG_DECISIONS", False)
     yield monkeypatch
     factory._build_from_settings.cache_clear()
 

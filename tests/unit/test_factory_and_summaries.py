@@ -8,6 +8,7 @@ from app.decisions.llm_provider import LLMDecisionProvider
 @pytest.fixture
 def fresh_factory(monkeypatch):
     factory._build_from_settings.cache_clear()
+    monkeypatch.setattr(factory.settings, "JEV_LOG_DECISIONS", False)
     yield monkeypatch
     factory._build_from_settings.cache_clear()
     factory.override_decision_provider(None)

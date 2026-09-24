@@ -30,6 +30,16 @@ def get_decision_provider() -> DecisionProvider:
 # provider can't change mid-process anyway.
 @lru_cache(maxsize=1)
 def _build_from_settings() -> DecisionProvider:
+    provider = _build_provider()
+    # Logging wraps whichever provider was chosen, so both modes are logged.
+    # (The setting keeps the brief's name, JEV_LOG_DECISIONS, but covers llm too.)
+    if settings.JEV_LOG_DECISIONS:
+        from app.decisions.decision_log import LoggedProvider, MongoDecisionLog
+        provider = LoggedProvider(provider, MongoDecisionLog(settings.MONGODB_URI), app_version=settings.APP_VERSION)
+    return provider
+
+
+def _build_provider() -> DecisionProvider:
     provider = settings.DECISION_PROVIDER.lower()
 
     if provider == "llm":

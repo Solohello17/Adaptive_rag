@@ -166,3 +166,22 @@ For comparison, the step 2 `llm` run of the same questions took 2048 to 10006 ms
 **Tests:** T16 (route and verify fall back, record reason and attempt), T17 (only failed chunks go to the LLM, in one call; no failures means no LLM call), T18 (fallback disabled raises), T20 (jev without a key fails fast; with a key builds the stack from settings), and a check that non-Jev exceptions are not swallowed. 9 new tests, 56 in total.
 
 **Files:** `app/decisions/fallback.py`, `app/decisions/factory.py`, `app/main.py`, `tests/unit/test_fallback.py`
+
+## Step 8: decision logs in MongoDB
+
+**Commit:** `feat(logging): log every decision to MongoDB`
+
+**What:** `app/decisions/decision_log.py` adds `LoggedProvider`, which wraps whichever provider the factory built (llm, or jev with fallback) and writes one document per decision to the `decision_logs` collection, one per chunk for grading. `MongoDecisionLog` uses a sync `pymongo` client, created on first write. A `request_id` contextvar ties each document to one query. The factory adds the wrapper when `JEV_LOG_DECISIONS=true`; the setting keeps the brief's name but covers both modes, since FR6 asks for every decision.
+
+**Why these choices:**
+
+- **Sync pymongo, not the app's Motor client:** the graph nodes are sync and cannot await Motor. pymongo was already installed as part of Motor.
+- **A contextvar for `request_id`:** it keeps the provider interface unchanged. A test confirms LangGraph passes the contextvar into the nodes it runs; without that, every real log would have `request_id=None`.
+- **Never raise:** a Mongo error only logs a warning. A dead Mongo waits up to 2 s (`serverSelectionTimeoutMS`) per write, which is acceptable because the app already needs Mongo for uploads.
+- **Previews only:** at most 200 characters of the question and passage. No full passages, context, answers, headers, or keys (NFR5).
+
+**Live check (25 Sept 2026):** one real Jev route decision, logged with `request_id="manual-check-step8"` and read back from Mongo: provider `jev`, model `typesafe-ai/jev`, result `general_knowledge`, confidence 1, 1356 ms, 460 input tokens, cost 0, market cost 0.00001932 USD. The API key does not appear in the document. That test document was left in place and is easy to filter out by its `request_id`.
+
+**Tests:** T19 (one document per decision with request id and app version, fallback reason and attempt kept, previews capped, decisions returned unchanged, dead Mongo swallowed, empty grade writes nothing), contextvar through LangGraph, and the factory wrapping. 7 new tests, 63 in total.
+
+**Files:** `app/decisions/decision_log.py`, `app/decisions/factory.py`, `tests/unit/test_decision_log.py`, `tests/unit/test_factory_and_summaries.py`, `tests/unit/test_fallback.py`
