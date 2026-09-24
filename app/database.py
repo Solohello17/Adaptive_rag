@@ -37,16 +37,20 @@ def init_qdrant_collections(vector_size: int = 384):
 def get_qdrant_client() -> QdrantClient:
     return qdrant_client
 
+def new_document_id() -> str:
+    return str(uuid.uuid4())
+
 async def save_document_metadata(
-    filename: str, 
-    description: str, 
-    collection_name: str, 
+    doc_id: str,
+    filename: str,
+    description: str,
+    collection_name: str,
     chunk_count: int
 ) -> str:
     """
-    Save document metadata to MongoDB and return the document ID.
+    Save document metadata to MongoDB under doc_id (the same id every Qdrant
+    chunk of this document carries as metadata.doc_id) and return it.
     """
-    doc_id = str(uuid.uuid4())
     metadata = {
         "_id": doc_id,
         "filename": filename,
@@ -58,3 +62,37 @@ async def save_document_metadata(
     
     await mongo_metadata_collection.insert_one(metadata)
     return doc_id
+
+
+async def list_documents() -> List[Dict[str, Any]]:
+    """
+    Returns id + filename + chunk_count for every ingested document, for the
+    frontend to repopulate the knowledge-base list on page load.
+    """
+    cursor = mongo_metadata_collection.find({}, {"filename": 1, "chunk_count": 1}).sort("upload_timestamp", 1)
+    docs = await cursor.to_list(length=None)
+    return [{"id": d["_id"], "filename": d["filename"], "chunk_count": d.get("chunk_count")} for d in docs]
+
+
+async def delete_document(doc_id: str) -> bool:
+    """
+    Removes a document's chunks from its Qdrant collection and its metadata
+    record from MongoDB. Qdrant goes first: if it fails, the Mongo record is
+    left in place so the document stays visible and the delete can be retried,
+    rather than leaving orphaned vectors that no longer appear in the UI.
+    Returns False if no document has this id.
+    """
+    record = await mongo_metadata_collection.find_one({"_id": doc_id})
+    if record is None:
+        return False
+
+    qdrant_client.delete(
+        collection_name=record.get("collection", "documents"),
+        points_selector=qmodels.FilterSelector(
+            filter=qmodels.Filter(
+                must=[qmodels.FieldCondition(key="metadata.doc_id", match=qmodels.MatchValue(value=doc_id))]
+            )
+        ),
+    )
+    await mongo_metadata_collection.delete_one({"_id": doc_id})
+    return True

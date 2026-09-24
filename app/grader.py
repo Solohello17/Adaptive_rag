@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import List, Literal
 from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
 from app.llm import get_llm
@@ -40,6 +40,57 @@ def grade_document(question: str, document: str) -> str:
     grader = get_document_grader()
     result = grader.invoke({"question": question, "document": document})
     return result.binary_score
+
+class GradeDocumentsBatch(BaseModel):
+    """Relevance verdicts for a numbered list of retrieved documents, in order."""
+    verdicts: List[Literal["yes", "no"]] = Field(
+        description="One 'yes' or 'no' per document, in the same order as the numbered documents."
+    )
+
+def grade_documents_batch(question: str, documents: List[str]) -> List[str]:
+    """
+    Grades every retrieved chunk in a single LLM call instead of one call per
+    chunk. Returns one 'yes'/'no' per document, in input order.
+
+    The model is asked for exactly len(documents) verdicts, but nothing forces
+    it to comply. If the count comes back wrong we can't tell which verdict
+    belongs to which chunk, so we fall back to grading each one separately.
+    """
+    if not documents:
+        return []
+
+    llm = get_llm(model_type="fast")
+    structured_llm_grader = llm.with_structured_output(GradeDocumentsBatch)
+
+    system = """You are a grader assessing the relevance of retrieved documents to a user question.
+    If a document contains keyword(s) or semantic meaning related to the user question, grade it as relevant.
+    It does not need to be a stringent test. The goal is to filter out clearly irrelevant retrievals.
+    Grade each document independently.
+
+    There are {count} documents below, numbered [0] to [{last}].
+    You must respond in JSON format with exactly one key "verdicts": a list of exactly {count} strings,
+    each 'yes' or 'no', where the i-th entry is the grade for document [i].
+    Example for 3 documents: {{"verdicts": ["yes", "no", "yes"]}}
+
+    Question: {question}
+
+    Documents:
+    {documents}"""
+
+    numbered = "\n\n".join(f"[{i}] {doc}" for i, doc in enumerate(documents))
+    grader = PromptTemplate.from_template(system) | structured_llm_grader
+    result = grader.invoke({
+        "count": len(documents),
+        "last": len(documents) - 1,
+        "question": question,
+        "documents": numbered,
+    })
+
+    if len(result.verdicts) != len(documents):
+        print(f"--- GRADE: batch returned {len(result.verdicts)} verdicts for {len(documents)} documents, falling back to per-document grading ---")
+        return [grade_document(question, doc) for doc in documents]
+
+    return result.verdicts
 
 class GradeHallucinations(BaseModel):
     """Boolean score for hallucination check on generated answer."""
@@ -119,7 +170,15 @@ if __name__ == "__main__":
     doc_irrelevant = "Apples are a great source of fiber and vitamin C. They grow on trees in temperate climates."
     score2 = grade_document(q_irrelevant, doc_irrelevant)
     print(f"Test 2 (Irrelevant): {score2}")
-    
+
+    print("\nTesting Batch Grader...")
+    batch_docs = [
+        doc_relevant,
+        doc_irrelevant,
+        "Product quantization splits vectors into sub-vectors and compresses each one, cutting a vector index's memory use.",
+    ]
+    print(f"Test 2b (Batch, expect ['yes', 'no', 'yes']): {grade_documents_batch(q_relevant, batch_docs)}")
+
     print("\nTesting Hallucination Grader...")
     docs_text = "SpaceX's Falcon 9 rocket uses RP-1 and liquid oxygen as propellants."
     gen_grounded = "The Falcon 9 uses liquid oxygen and RP-1."

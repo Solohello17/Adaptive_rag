@@ -1,5 +1,6 @@
 import os
 import io
+import logging
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -8,9 +9,23 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 
-from app.database import init_qdrant_collections, save_document_metadata, get_qdrant_client
+from app.database import (
+    init_qdrant_collections,
+    new_document_id,
+    save_document_metadata,
+    get_qdrant_client,
+    list_documents,
+    delete_document,
+)
+from app.config import settings
 from app.llm import get_embeddings
 from app.graph import rag_app
+
+# Uvicorn only configures handlers for its own loggers, so without this our
+# app.* INFO/DEBUG lines are silently dropped. Root stays at WARNING, which
+# keeps httpx/pymongo/huggingface chatter out of the terminal.
+logging.basicConfig(format="%(levelname)s:     %(name)s - %(message)s")
+logging.getLogger("app").setLevel(settings.LOG_LEVEL.upper())
 
 # Triggering uvicorn hot-reload to pick up .env changes
 
@@ -21,6 +36,8 @@ app = FastAPI(title="Adaptive RAG - Layer 1")
 async def startup_event():
     # Initialize Qdrant collections on startup
     init_qdrant_collections()
+    # Load the embedding model now so the first query doesn't pay the ~6-13s load.
+    get_embeddings()
     print("Startup: Qdrant collections checked/initialized.")
 
 @app.post("/rag/documents/upload")
@@ -55,9 +72,15 @@ async def upload_document(
     # Chunking
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     texts = text_splitter.split_text(text)
-    
-    documents = [Document(page_content=t, metadata={"source": file.filename}) for t in texts]
-    
+
+    # Every chunk carries the document's id so it can be deleted precisely later,
+    # even if another document with the same filename is uploaded.
+    doc_id = new_document_id()
+    documents = [
+        Document(page_content=t, metadata={"source": file.filename, "doc_id": doc_id})
+        for t in texts
+    ]
+
     # Embedding and Upserting to Qdrant
     try:
         embeddings = get_embeddings()
@@ -75,7 +98,8 @@ async def upload_document(
         
     # Save metadata to MongoDB
     try:
-        doc_id = await save_document_metadata(
+        await save_document_metadata(
+            doc_id=doc_id,
             filename=file.filename,
             description=x_description,
             collection_name="documents",
@@ -83,13 +107,38 @@ async def upload_document(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error saving to MongoDB: {str(e)}")
-        
+
     return {
         "message": "Document ingested successfully",
         "doc_id": doc_id,
         "filename": file.filename,
         "chunks": len(documents)
     }
+
+
+@app.get("/rag/documents")
+async def get_documents():
+    """
+    Lists all ingested documents (id, filename, chunk count) so the frontend can
+    repopulate the knowledge-base list on page load, not just within the
+    current browser session.
+    """
+    return await list_documents()
+
+
+@app.delete("/rag/documents/{doc_id}")
+async def remove_document(doc_id: str):
+    """
+    Deletes a document's vectors from Qdrant and its metadata from MongoDB.
+    """
+    try:
+        found = await delete_document(doc_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
+    if not found:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return {"message": "Document deleted", "doc_id": doc_id}
+
 
 from typing import List, Optional
 
