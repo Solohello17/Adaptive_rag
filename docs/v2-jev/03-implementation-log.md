@@ -197,3 +197,15 @@ For comparison, the step 2 `llm` run of the same questions took 2048 to 10006 ms
 **Tests:** T25 (response has exactly the v1 fields plus `decisions`, with v1 values unchanged), a state with no decisions returns an empty list, and each query gets its own request id that is reset afterwards. The graph is stubbed and startup does not run. 3 new tests, 66 in total.
 
 **Files:** `app/main.py`, `tests/unit/test_api_query.py`
+
+## Step 10: decisions in the UI trace
+
+**Commit:** `feat(ui): show decision provider and confidence in the trace`
+
+**What:** `static/index.html` maps the new `decisions` field and draws one row per decision inside the expanded trace, under the existing steps: decision, provider, result, confidence (route only), latency, and a "fell back to llm (reason)" line when a fallback happened. The collapsed summary line gets `jev` (or `jev, N fallbacks`) at the end, but only when Jev made at least one decision, so the collapsed line in `llm` mode is exactly the v1 line. The `MOCK` responses gained illustrative decision rows, labelled as not measured.
+
+**Design rule kept:** everything new sits inside the trace, the only element allowed to use the accent colour. The provider name uses the accent and fallbacks use the existing `--fail` colour; no new colour tokens were added.
+
+**Checked in the browser pane (mock mode):** a documents answer showing `documents · 2/4 docs kept · grounded · jev, 1 fallback` with a grade row reading "1 fell back to llm (rate limited)", and a direct answer with a route that fell back for low confidence. At a 375 px viewport the rows wrap into three columns and the page has no horizontal scroll.
+
+**Files:** `static/index.html`
