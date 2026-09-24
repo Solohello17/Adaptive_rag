@@ -1,0 +1,44 @@
+# Jev question wording for the v2.0 decision layer.
+#
+# Tune wording here, not in code. User text (question, passages, context,
+# answer) never goes in this file: it is only ever sent inside `state`.
+#
+# The wording deliberately mirrors the v1 LLM prompts so the comparison is
+# fair (see docs/v2-jev/02-design.md, section 9):
+#   route    <- router system prompt + RouteQuery.datasource description
+#   grade    <- document grader ("does not need to be a stringent test")
+#   verify   <- hallucination grader (incl. its "I don't know" rule) and answer grader
+#
+# `unclear` is not a v1 route. It never leaves the Jev provider: picking it
+# makes that one decision fall back to the LLM.
+
+route:
+  type: choice
+  instructions: "Decide which datasource should answer the user question in the state."
+  criteria:
+    documents: "About the system manual, student login, grading, internal guidelines, or the knowledge base of uploaded documents such as PDFs and manuals"
+    code: "About the codebase, code, software architecture, functions, Python, FastAPI, LangGraph, or databases"
+    general_knowledge: "A greeting, general chit-chat, or a simple fact that can be answered directly without looking anything up"
+    web_search: "Needs current, live, or recent information, or anything outside the domains above"
+    unclear: "Empty, ambiguous, off-topic, or none of the above"
+
+grade:
+  type: noul
+  instructions: "Is the passage related to the question?"
+  criteria:
+    "true": "The passage shares keywords or meaning with the question, even if it does not fully answer it"
+    "false": "The passage is clearly about something unrelated to the question"
+
+verify:
+  grounded:
+    type: noul
+    instructions: "Is the answer supported by the context?"
+    criteria:
+      "true": "Every factual claim in the answer appears in the context, or the answer says the context does not contain the information"
+      "false": "The answer makes at least one claim that the context does not support"
+  answers_question:
+    type: noul
+    instructions: "Does the answer directly address the question?"
+    criteria:
+      "true": "A direct, helpful response that resolves the question"
+      "false": "The answer dodges the question or fails to resolve it"
