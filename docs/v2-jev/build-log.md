@@ -20,3 +20,10 @@ Short, dated entries. Newest at the bottom.
 ## 25 Sept 2026: Phase 2, requirements
 
 - Drafted `01-requirements.md` from the brief, adjusted to the real code, with a release rule decided before any Jev results exist.
+
+## 25 Sept 2026: Phase 3, design
+
+- Requirements approved.
+- Checked the brief's API notes against the live Vercel and TypeSafe docs before designing. Three corrections: answers come back nested under `answers`, `cost` and `marketCost` are strings, and Noul questions accept optional `criteria` for the yes and no cases.
+- Used Noul `criteria` to carry v1's grader rules into Jev word for word, including the "saying the context lacks it counts as grounded" rule that fixed v1's "I don't know" loop.
+- Drafted `02-design.md`: a stack of small wrappers (logging, fallback, Jev, LLM) behind one interface, with the graph itself unchanged.
