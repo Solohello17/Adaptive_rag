@@ -20,6 +20,7 @@ from app.database import (
 from app.config import settings
 from app.llm import get_embeddings
 from app.graph import rag_app
+from app.decisions.factory import get_decision_provider
 
 # Uvicorn only configures handlers for its own loggers, so without this our
 # app.* INFO/DEBUG lines are silently dropped. Root stays at WARNING, which
@@ -39,6 +40,9 @@ async def startup_event():
     # Load the embedding model now so the first query doesn't pay the ~6-13s load.
     get_embeddings()
     print("Startup: Qdrant collections checked/initialized.")
+    # Build the decision provider now so a bad DECISION_PROVIDER setup (e.g. jev
+    # without AI_GATEWAY_API_KEY) stops the server at boot, not on the first query.
+    print(f"Startup: decision provider = {get_decision_provider().name}")
 
 @app.post("/rag/documents/upload")
 async def upload_document(

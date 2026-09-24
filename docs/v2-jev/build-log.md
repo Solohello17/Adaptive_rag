@@ -33,3 +33,11 @@ Short, dated entries. Newest at the bottom.
 - Design approved. Added the settings and the Jev question wording (step 1).
 - Step 2 moved the three decision nodes behind one interface, with the LLM provider calling the v1 functions unchanged. 18 offline tests pass, including both retry-cap loops.
 - Live check: 5 eval questions in `llm` mode gave the same routes, the same step sequence, and the same grounded and retry values as the v1 baseline. The `?` crash still happens, as expected, since that v1 bug is out of scope.
+
+## 25 Sept 2026: Phase 4, steps 3 to 7
+
+- First real calls to Jev through our own client. The gateway lists one model, `jev`, with no versioned id, so it is unpinned. The systemone endpoint accepts JSON-object state.
+- Built Jev route, grade, and verify, then the per-decision fallback. `DECISION_PROVIDER=jev` now works end to end.
+- Sanity checks worked: gibberish came back `unclear`; the "context does not say" answer scored 0.97 grounded, so v1's "I don't know" loop fix survived the move to Jev.
+- On 5 eval questions the Jev run took the same route and path as v1, with each decision well under a second. The `?` question still crashes: Jev said `unclear` correctly, but the LLM it fell back to has the known v1 JSON bug.
+- Jev's grading is lenient (8 of 8 chunks kept where the LLM kept 7 and 4). Noted for threshold tuning in Phase 5.

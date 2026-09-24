@@ -36,7 +36,30 @@ def _build_from_settings() -> DecisionProvider:
         return LLMDecisionProvider()
 
     elif provider == "jev":
-        raise ValueError("DECISION_PROVIDER=jev is not wired up yet (Phase 4 step 7)")
+        # Fail fast on a missing key: silently falling back on every query
+        # would hide the misconfiguration.
+        if not settings.AI_GATEWAY_API_KEY:
+            raise ValueError("DECISION_PROVIDER=jev needs AI_GATEWAY_API_KEY in .env")
+
+        from app.decisions.fallback import FallbackProvider
+        from app.decisions.jev_client import JevClient
+        from app.decisions.jev_provider import JevDecisionProvider, load_questions
+
+        jev = JevDecisionProvider(
+            client=JevClient(
+                api_key=settings.AI_GATEWAY_API_KEY,
+                base_url=settings.JEV_BASE_URL,
+                model=settings.JEV_MODEL,
+                timeout=settings.JEV_TIMEOUT_SECONDS,
+            ),
+            questions=load_questions(),
+            route_min_confidence=settings.JEV_ROUTE_MIN_CONFIDENCE,
+            grade_threshold=settings.JEV_GRADE_THRESHOLD,
+            verify_threshold=settings.JEV_VERIFY_THRESHOLD,
+            max_concurrency=settings.JEV_MAX_CONCURRENCY,
+            max_state_chars=settings.JEV_MAX_STATE_CHARS,
+        )
+        return FallbackProvider(jev, LLMDecisionProvider(), enabled=settings.JEV_FALLBACK_TO_LLM)
 
     else:
         raise ValueError(f"Unsupported DECISION_PROVIDER: {provider}")

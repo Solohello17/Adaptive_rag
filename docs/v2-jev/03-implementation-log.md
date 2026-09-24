@@ -135,3 +135,34 @@ The third row is the important one: the grounded criteria carry v1's "saying the
 **Tests:** T12 (one request with both checks, no grounded question without context, inclusive threshold), a missing-score test, and T13 for an oversized context. 5 new tests.
 
 **Files:** `app/decisions/jev_provider.py`, `tests/unit/test_jev_provider.py`
+
+## Step 7: fallback wrapper and factory
+
+**Commit:** `feat(decisions): add per-decision LLM fallback and enable jev mode`
+
+**What:**
+
+- `app/decisions/fallback.py`: `FallbackProvider` tries Jev for each decision and catches only `JevDecisionError`. On a failure it asks the LLM for that one decision and records `fallback_reason` and `jev_attempt` (what Jev said, or why it failed). For grading, only the failed chunks are re-graded, in one batched LLM call. With `JEV_FALLBACK_TO_LLM=false` Jev errors are raised instead.
+- `app/decisions/factory.py`: `DECISION_PROVIDER=jev` now builds `FallbackProvider(JevDecisionProvider(...), LLMDecisionProvider())` from settings, and raises a clear error if `AI_GATEWAY_API_KEY` is missing. The Jev imports sit inside that branch, the same way `app/llm.py` imports each provider only in its own branch.
+- `app/main.py`: startup builds the provider once, so a missing key stops the server at boot (NFR6) instead of failing every query.
+
+**Why only `JevDecisionError`:** a Jev failure is expected (free-tier rate limits, `unclear`, timeouts) and has a known LLM answer. Any other exception is a bug in our code, and hiding it behind a silent fallback would make it invisible.
+
+**Checks (25 Sept 2026):**
+
+- With `DECISION_PROVIDER=jev` and no key, the app refused to start: `DECISION_PROVIDER=jev needs AI_GATEWAY_API_KEY in .env`.
+- Live run of the same 5 eval questions as step 2, in `jev` mode:
+
+| Question | Route (v1 to v2) | Steps, grounded, retries | Jev route | Jev grade (wall) | Jev verify |
+|---|---|---|---|---|---|
+| q01 documents | same | same | documents, 784 ms | 8/8 kept, 1666 ms | 780 ms |
+| q11 general | same | same | general_knowledge, 423 ms | n/a | 454 ms |
+| q18 override case | same (override fired) | same | general_knowledge, 513 ms | 8/8 kept, 1501 ms | 707 ms |
+| q21 web | same | same | web_search, 475 ms | n/a | 679 ms |
+| q32 `?` | crash to crash | n/a | `unclear`, fell back to the LLM router, which crashed (K1) | n/a | n/a |
+
+For comparison, the step 2 `llm` run of the same questions took 2048 to 10006 ms per route decision, 2289 to 4277 ms per grade, and 2187 to 5424 ms per verify. That is five questions, one run each, so it shows direction, not a benchmark; Phase 5 measures it properly. Jev kept 8 of 8 chunks on q01 and q18, where the LLM kept 7 and 4, which matches the leniency seen in step 5.
+
+**Tests:** T16 (route and verify fall back, record reason and attempt), T17 (only failed chunks go to the LLM, in one call; no failures means no LLM call), T18 (fallback disabled raises), T20 (jev without a key fails fast; with a key builds the stack from settings), and a check that non-Jev exceptions are not swallowed. 9 new tests, 56 in total.
+
+**Files:** `app/decisions/fallback.py`, `app/decisions/factory.py`, `app/main.py`, `tests/unit/test_fallback.py`
