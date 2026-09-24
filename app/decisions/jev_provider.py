@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Union, get_args
 
 import yaml
 
-from app.decisions.base import DecisionMeta, GradeDecision, JevDecisionError, Route, RouteDecision
+from app.decisions.base import DecisionMeta, GradeDecision, JevDecisionError, Route, RouteDecision, VerifyDecision
 from app.decisions.jev_client import JevClient, JevResponse, state_chars
 
 QUESTIONS_PATH = Path(__file__).with_name("jev_questions.yaml")
@@ -33,6 +33,7 @@ class JevDecisionProvider:
         questions: Dict[str, Any],
         route_min_confidence: float,
         grade_threshold: float,
+        verify_threshold: float,
         max_concurrency: int,
         max_state_chars: int,
     ):
@@ -40,6 +41,7 @@ class JevDecisionProvider:
         self.questions = questions
         self.route_min_confidence = route_min_confidence
         self.grade_threshold = grade_threshold
+        self.verify_threshold = verify_threshold
         self.max_concurrency = max_concurrency
         self.max_state_chars = max_state_chars
 
@@ -108,3 +110,34 @@ class JevDecisionProvider:
             if isinstance(result, JevDecisionError):
                 raise result
         return results
+
+    def verify(self, question: str, context: str, answer: str) -> VerifyDecision:
+        """
+        Both checks in one request (Jev answers questions in parallel, so the
+        second costs almost no extra time). Like v1, there is no grounded check
+        without context. Unlike v1, "answers the question" is always scored;
+        check_generation ignores it when the answer is not grounded, so the
+        graph's path is the same as v1's either way.
+        """
+        verify_questions = self.questions["verify"]
+        questions = {"answers_question": verify_questions["answers_question"]}
+        state = {"question": question}
+        if context:
+            questions["grounded"] = verify_questions["grounded"]
+            state["context"] = context
+        state["answer"] = answer
+
+        response = self._ask(state, questions)
+        scores = {name: response.answers[name].get("noul") for name in questions}
+        if not all(isinstance(score, (int, float)) for score in scores.values()):
+            raise JevDecisionError("bad_response", {"latency_ms": response.latency_ms, "answers": response.answers})
+
+        grounded_score = scores.get("grounded")
+        answers_score = scores["answers_question"]
+        return VerifyDecision(
+            grounded=None if grounded_score is None else grounded_score >= self.verify_threshold,
+            answers_question=answers_score >= self.verify_threshold,
+            grounded_score=grounded_score,
+            answers_score=answers_score,
+            meta=self._meta(response),
+        )

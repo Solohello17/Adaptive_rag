@@ -29,7 +29,7 @@ class FakeClient:
 
 
 def provider(answer_fn, **overrides):
-    config = {"route_min_confidence": 0.6, "grade_threshold": 0.5, "max_concurrency": 3, "max_state_chars": 60000, **overrides}
+    config = {"route_min_confidence": 0.6, "grade_threshold": 0.5, "verify_threshold": 0.5, "max_concurrency": 3, "max_state_chars": 60000, **overrides}
     client = FakeClient(answer_fn)
     return JevDecisionProvider(client=client, questions=QUESTIONS, **config), client
 
@@ -137,4 +137,59 @@ def test_grade_each_returns_error_only_for_failed_chunk():
 def test_grade_with_no_passages_makes_no_call():
     p, client = provider(lambda s, q: {})
     assert p.grade("q", []) == []
+    assert client.calls == []
+
+
+def verify_answer(grounded=None, answers=None):
+    def answer(state, questions):
+        out = {}
+        if "grounded" in questions:
+            out["grounded"] = {"type": "noul", "noul": grounded}
+        out["answers_question"] = {"type": "noul", "noul": answers}
+        return out
+    return answer
+
+
+# T12
+def test_verify_sends_both_checks_in_one_request_with_context():
+    p, client = provider(verify_answer(grounded=0.93, answers=0.3))
+    verdict = p.verify("q", "ctx", "ans")
+    assert (verdict.grounded, verdict.answers_question) == (True, False)
+    assert (verdict.grounded_score, verdict.answers_score) == (0.93, 0.3)
+    assert len(client.calls) == 1
+    state, questions = client.calls[0]
+    assert state == {"question": "q", "context": "ctx", "answer": "ans"}
+    assert set(questions) == {"grounded", "answers_question"}
+
+
+# T12
+def test_verify_without_context_skips_grounded_question():
+    p, client = provider(verify_answer(answers=0.8))
+    verdict = p.verify("q", "", "ans")
+    assert (verdict.grounded, verdict.answers_question, verdict.grounded_score) == (None, True, None)
+    state, questions = client.calls[0]
+    assert state == {"question": "q", "answer": "ans"}
+    assert set(questions) == {"answers_question"}
+
+
+# T12
+def test_verify_threshold_is_inclusive():
+    p, _ = provider(verify_answer(grounded=0.5, answers=0.49))
+    verdict = p.verify("q", "ctx", "ans")
+    assert (verdict.grounded, verdict.answers_question) == (True, False)
+
+
+def test_verify_missing_score_is_bad_response():
+    p, _ = provider(verify_answer(grounded=None, answers=0.9))
+    with pytest.raises(JevDecisionError) as info:
+        p.verify("q", "ctx", "ans")
+    assert info.value.reason == "bad_response"
+
+
+# T13
+def test_verify_oversized_context_raises_without_calling_jev():
+    p, client = provider(verify_answer(grounded=0.9, answers=0.9), max_state_chars=100)
+    with pytest.raises(JevDecisionError) as info:
+        p.verify("q", "c" * 200, "ans")
+    assert info.value.reason == "state_too_large"
     assert client.calls == []

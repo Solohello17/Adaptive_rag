@@ -112,3 +112,26 @@ All three calls ran concurrently: about 886 ms each, 891 ms wall time. The third
 **Tests:** T11 (threshold, one chunk per call, order kept under concurrency, cap of 3 never exceeded, one failed chunk leaves the others intact), plus an empty-input test. 4 new tests.
 
 **Files:** `app/decisions/jev_provider.py`, `tests/unit/test_jev_provider.py`
+
+## Step 6: Jev verify
+
+**Commit:** `feat(decisions): add Jev answer verification`
+
+**What:** `JevDecisionProvider.verify()` sends two Nouls, `grounded` and `answers_question`, in one request with state `{"question", "context", "answer"}`. Without context it drops both the `context` field and the grounded question, matching v1, which skips the grounded check when there is no context. Each check passes at `>= JEV_VERIFY_THRESHOLD`.
+
+**Why one request:** Jev evaluates questions in parallel, so asking both at once costs about the same time as asking one. The node still ignores "answers the question" when the answer is not grounded, so the graph takes the same path as v1.
+
+**Live sanity check (v1's own grader test cases, 25 Sept 2026):**
+
+| Case | Grounded (score) | Answers (score) | Latency |
+|---|---|---|---|
+| Falcon 9 uses LOX and RP-1 (correct) | True (0.99) | True (0.98) | 809 ms |
+| Falcon 9 uses liquid hydrogen, built in Texas (hallucinated) | False (0.01) | False (0.45) | 459 ms |
+| "The context does not say who founded SpaceX" | **True (0.97)** | False (0.18) | 556 ms |
+| Eiffel Tower "is located in Paris" to "how tall", no context | n/a | False (0.02) | 503 ms |
+
+The third row is the important one: the grounded criteria carry v1's "saying the context lacks it counts as grounded" rule, so Jev does not recreate v1's "I don't know" loop. The low answer score then sends the graph to web search, which is v1's intended behaviour for a grounded but unhelpful answer.
+
+**Tests:** T12 (one request with both checks, no grounded question without context, inclusive threshold), a missing-score test, and T13 for an oversized context. 5 new tests.
+
+**Files:** `app/decisions/jev_provider.py`, `tests/unit/test_jev_provider.py`
