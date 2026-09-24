@@ -50,3 +50,22 @@ One entry per step of Phase 4. Each step is one commit on `feature/jev-decision-
 | q32 `?` | crash to crash (`OutputParserException`, known issue K1, unchanged by design) | yes | n/a | n/a |
 
 **Files:** `app/decisions/__init__.py`, `app/decisions/base.py`, `app/decisions/llm_provider.py`, `app/decisions/factory.py`, `app/graph.py`, `pytest.ini`, `tests/unit/test_llm_provider.py`, `tests/unit/test_graph_paths.py`, `tests/unit/test_factory_and_summaries.py`
+
+## Step 3: Jev HTTP client and model-list check
+
+**Commit:** `feat(decisions): add Jev HTTP client and model-list check`
+
+**What:** `app/decisions/jev_client.py` makes one `POST {JEV_BASE_URL}/v1/systemone` call with `httpx` and returns the answers, usage, and cost. Every failure becomes a `JevDecisionError` with a reason code: `timeout`, `network_error`, `rate_limited` (429), `out_of_credit` (402), `http_error`, or `bad_response`. `scripts/check_jev_models.py` lists the gateway's evaluation models and, with `--smoke`, makes one real call.
+
+**Why:** One small file owns the endpoint and response shape, so switching to Vercel's `/v1/evaluate` later only touches this file. Reason codes let the fallback record why Jev was skipped without parsing error text.
+
+**Key safety:** the key only goes in the request header. Network exceptions are reduced to their type name, so no URL or header text reaches an error message. Test T07 checks this.
+
+**Real calls (25 Sept 2026):**
+
+- `GET /v1/models` returned one model: `name=jev`, `release_date=2026-09-15`. No versioned id exists, so `JEV_MODEL` stays `typesafe-ai/jev` and is **unpinned**. The shape is `{"models": [{"name", "description", "release_date"}]}`, not the `{"data": [{"id"}]}` shape the script first assumed.
+- Smoke call with a JSON-object state (`{"question": "What is the capital of France?"}`): `direct`, confidence 1, 347 input tokens, 40 output tokens, cost 0 (free credit), market cost 0.000014574 USD, 1118 ms end to end from the laptop (a single call on a fresh connection, not a benchmark). This confirms the systemone endpoint accepts object state, so no `json.dumps` workaround is needed.
+
+**Tests:** T01 to T07 plus a status-code and a state-size test, 11 in total, all with `httpx.MockTransport`.
+
+**Files:** `app/decisions/jev_client.py`, `scripts/check_jev_models.py`, `tests/unit/test_jev_client.py`
