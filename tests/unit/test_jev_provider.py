@@ -29,7 +29,7 @@ class FakeClient:
 
 
 def provider(answer_fn, **overrides):
-    config = {"route_min_confidence": 0.6, "max_state_chars": 60000, **overrides}
+    config = {"route_min_confidence": 0.6, "grade_threshold": 0.5, "max_concurrency": 3, "max_state_chars": 60000, **overrides}
     client = FakeClient(answer_fn)
     return JevDecisionProvider(client=client, questions=QUESTIONS, **config), client
 
@@ -84,4 +84,57 @@ def test_oversized_state_raises_without_calling_jev():
     with pytest.raises(JevDecisionError) as info:
         p.route("x" * 100)
     assert info.value.reason == "state_too_large"
+    assert client.calls == []
+
+
+# T11
+def test_grade_applies_threshold_per_chunk_and_sends_one_chunk_per_call():
+    scores = {"a": 0.9, "b": 0.49, "c": 0.5}
+    p, client = provider(lambda state, questions: {"grade": {"type": "noul", "noul": scores[state["passage"]]}})
+    grades = p.grade("q", ["a", "b", "c"])
+    assert [(g.relevant, g.score) for g in grades] == [(True, 0.9), (False, 0.49), (True, 0.5)]
+    assert all(g.meta.provider == "jev" for g in grades)
+    assert sorted(state["passage"] for state, _ in client.calls) == ["a", "b", "c"]
+    assert all(state == {"question": "q", "passage": state["passage"]} and questions == {"grade": QUESTIONS["grade"]} for state, questions in client.calls)
+
+
+# T11
+def test_grade_keeps_order_and_respects_concurrency_cap():
+    in_flight, peak, lock = [0], [0], threading.Lock()
+
+    def answer(state, questions):
+        with lock:
+            in_flight[0] += 1
+            peak[0] = max(peak[0], in_flight[0])
+        # Earlier chunks finish later, so a naive "collect as completed" would reorder them.
+        time.sleep(0.05 * (10 - int(state["passage"])) / 10)
+        with lock:
+            in_flight[0] -= 1
+        return {"grade": {"type": "noul", "noul": int(state["passage"]) / 10}}
+
+    p, _ = provider(answer, max_concurrency=3)
+    passages = [str(i) for i in range(8)]
+    grades = p.grade("q", passages)
+    assert [g.score for g in grades] == [i / 10 for i in range(8)]
+    assert 1 < peak[0] <= 3
+
+
+# T11
+def test_grade_each_returns_error_only_for_failed_chunk():
+    def answer(state, questions):
+        if state["passage"] == "b":
+            return JevDecisionError("rate_limited", {"status_code": 429})
+        return {"grade": {"type": "noul", "noul": 0.8}}
+
+    p, _ = provider(answer)
+    results = p.grade_each("q", ["a", "b", "c"])
+    assert [type(r).__name__ for r in results] == ["GradeDecision", "JevDecisionError", "GradeDecision"]
+    assert results[1].reason == "rate_limited"
+    with pytest.raises(JevDecisionError):
+        p.grade("q", ["a", "b", "c"])
+
+
+def test_grade_with_no_passages_makes_no_call():
+    p, client = provider(lambda s, q: {})
+    assert p.grade("q", []) == []
     assert client.calls == []

@@ -90,3 +90,25 @@ One entry per step of Phase 4. Each step is one commit on `feature/jev-decision-
 **Tests:** T08 (each route maps, and the exact state and question sent), T09 (`unclear`), T10 (low confidence), T13 (oversized state makes no call), plus unknown-choice and YAML-option checks. 9 tests.
 
 **Files:** `app/decisions/jev_provider.py`, `tests/unit/test_jev_provider.py`
+
+## Step 5: Jev grade
+
+**Commit:** `feat(decisions): add Jev per-chunk grading`
+
+**What:** `JevDecisionProvider.grade_each()` sends one Noul per chunk with state `{"question": ..., "passage": ...}`, through a `ThreadPoolExecutor` capped at `JEV_MAX_CONCURRENCY`. It returns, in input order, either a `GradeDecision` (relevant if `noul >= JEV_GRADE_THRESHOLD`) or the `JevDecisionError` for that chunk. `grade()` is the strict version that raises on the first failure.
+
+**Why per chunk, and why errors are returned instead of raised:** one chunk per call follows the brief's rule that Jev is less accurate on long, mixed state. Returning each chunk's error lets the fallback (step 7) send only the failed chunks to the LLM, instead of re-grading all of them.
+
+**Live sanity check (3 chunks, question "What is the subject code for Machine Learning?", 25 Sept 2026):**
+
+| Chunk | Noul | Relevant at 0.5 |
+|---|---|---|
+| question bank header with "Machine Learning (3170724)" | 0.99 | yes |
+| syllabus header with "Subject Code : 3170724" | 0.99 | yes |
+| Chapter 9 neural network questions (no subject code) | 0.72 | yes |
+
+All three calls ran concurrently: about 886 ms each, 891 ms wall time. The third chunk shows how lenient the wording is. That leniency deliberately mirrors v1's grader ("It does not need to be a stringent test"), and v1 was similar (it kept 7 of 8 chunks on q01 in the baseline). `JEV_GRADE_THRESHOLD` is a Phase 5 tuning question, not changed here.
+
+**Tests:** T11 (threshold, one chunk per call, order kept under concurrency, cap of 3 never exceeded, one failed chunk leaves the others intact), plus an empty-input test. 4 new tests.
+
+**Files:** `app/decisions/jev_provider.py`, `tests/unit/test_jev_provider.py`

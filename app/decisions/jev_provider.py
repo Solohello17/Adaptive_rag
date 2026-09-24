@@ -1,9 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, get_args
+from typing import Any, Dict, List, Union, get_args
 
 import yaml
 
-from app.decisions.base import DecisionMeta, JevDecisionError, Route, RouteDecision
+from app.decisions.base import DecisionMeta, GradeDecision, JevDecisionError, Route, RouteDecision
 from app.decisions.jev_client import JevClient, JevResponse, state_chars
 
 QUESTIONS_PATH = Path(__file__).with_name("jev_questions.yaml")
@@ -31,11 +32,15 @@ class JevDecisionProvider:
         client: JevClient,
         questions: Dict[str, Any],
         route_min_confidence: float,
+        grade_threshold: float,
+        max_concurrency: int,
         max_state_chars: int,
     ):
         self.client = client
         self.questions = questions
         self.route_min_confidence = route_min_confidence
+        self.grade_threshold = grade_threshold
+        self.max_concurrency = max_concurrency
         self.max_state_chars = max_state_chars
 
     def _ask(self, state: Dict[str, Any], questions: Dict[str, Any]) -> JevResponse:
@@ -74,3 +79,32 @@ class JevDecisionProvider:
             raise JevDecisionError("low_confidence", attempt)
 
         return RouteDecision(route=choice, meta=self._meta(response, confidence=confidence, probabilities=probabilities))
+
+    def _grade_one(self, question: str, passage: str) -> Union[GradeDecision, JevDecisionError]:
+        try:
+            response = self._ask({"question": question, "passage": passage}, {"grade": self.questions["grade"]})
+        except JevDecisionError as e:
+            return e
+        score = response.answers["grade"].get("noul")
+        if not isinstance(score, (int, float)):
+            return JevDecisionError("bad_response", {"latency_ms": response.latency_ms, "answer": response.answers["grade"]})
+        return GradeDecision(relevant=score >= self.grade_threshold, score=score, meta=self._meta(response))
+
+    def grade_each(self, question: str, passages: List[str]) -> List[Union[GradeDecision, JevDecisionError]]:
+        """
+        One Noul per chunk (Jev is less accurate on long, mixed state), run
+        concurrently but at most JEV_MAX_CONCURRENCY at a time. Returns a
+        GradeDecision or the JevDecisionError for each chunk, in input order,
+        so the fallback can send only the failed chunks to the LLM.
+        """
+        if not passages:
+            return []
+        with ThreadPoolExecutor(max_workers=self.max_concurrency) as pool:
+            return list(pool.map(lambda passage: self._grade_one(question, passage), passages))
+
+    def grade(self, question: str, passages: List[str]) -> List[GradeDecision]:
+        results = self.grade_each(question, passages)
+        for result in results:
+            if isinstance(result, JevDecisionError):
+                raise result
+        return results
