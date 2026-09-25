@@ -33,28 +33,28 @@ def get_question_router():
     """
     # Get the provider-agnostic LLM
     llm = get_llm(model_type="fast")
-    
+
     # Enforce structured output using the Pydantic model
     structured_llm_router = llm.with_structured_output(RouteQuery)
-    
+
     # Create the routing system prompt
     system_prompt = """You are an expert at routing a user question to the appropriate datasource.
-    
+
     You MUST route the question to exactly one of these four categories: 'documents', 'code', 'web_search', or 'general_knowledge'.
-    
+
     - Route to 'documents' if the question is about the system manual, student login, grading, internal guidelines, or knowledge base.
     - Route to 'code' if the question is about the codebase, Python, FastAPI, LangGraph, or databases.
     - Route to 'general_knowledge' if the question is a greeting or general chit-chat.
     - Route to 'web_search' for recent events or things outside the specific domains above.
-    
+
     You must respond in JSON format with exactly one key "datasource".
     Example: {{"datasource": "web_search"}}
     """
-    
+
     prompt = PromptTemplate.from_template(
         system_prompt + "\n\nUser Question: {question}"
     )
-    
+
     # Chain the prompt and the structured LLM
     question_router = prompt | structured_llm_router
     return question_router

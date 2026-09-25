@@ -201,6 +201,29 @@
   .step-name { color: var(--ink); min-width: 128px; }
   .step.on { border-left-color: var(--trace); }
 
+  /* v2: who made each decision (route / grade / verify). Part of the trace. */
+  .decisions-label {
+    margin: 12px 0 4px 11px;
+    font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .decision {
+    display: grid;
+    grid-template-columns: 58px 44px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 5px 0 5px 9px;
+    border-left: 2px solid var(--line);
+    color: var(--muted);
+  }
+  .decision-name { color: var(--ink); }
+  .decision-provider { color: var(--trace); }
+  .decision-meta { text-align: right; white-space: nowrap; }
+  .decision-fallback { grid-column: 3 / -1; color: var(--fail); }
+  @media (max-width: 560px) {
+    .decision { grid-template-columns: 58px 44px minmax(0, 1fr); }
+    .decision-meta { grid-column: 3; text-align: left; }
+  }
+
   /* Thinking state — shows WHICH step, since yours has several */
   .thinking {
     font-family: var(--font-mono); font-size: 11.5px;
@@ -363,9 +386,11 @@ function renderThread() {
 function traceHTML(t, i) {
   if (!t.trace) return '';
   const s = t.trace;
+  const decisions = s.decisions || [];
   const summary = [srcLabel(s.route), s.docsKept != null ? `${s.docsKept}/${s.docsFound} docs kept` : null,
                    s.retries ? `${s.retries} retry` : null,
-                   t.failed ? 'no answer' : (s.grounded ? 'grounded' : null)]
+                   t.failed ? 'no answer' : (s.grounded ? 'grounded' : null),
+                   providerLabel(decisions)]
                   .filter(Boolean).join('  ·  ');
 
   return `
@@ -379,8 +404,35 @@ function traceHTML(t, i) {
             <span class="step-name">${esc(st.name)}</span>
             <span>${esc(st.detail)}</span>
           </div>`).join('')}
+        ${decisions.length ? `<div class="decisions-label">decisions</div>${decisions.map(decisionHTML).join('')}` : ''}
       </div>
     </div>`;
+}
+
+/* v2: one row per decision, e.g. "route  jev  documents  0.98 · 784 ms". */
+function decisionHTML(d) {
+  const meta = [d.confidence != null ? Number(d.confidence).toFixed(2) : null, `${Math.round(d.latency_ms)} ms`]
+               .filter(Boolean).join(' · ');
+  let fallback = '';
+  if (d.fallback_reason) {
+    const count = d.fallback_count ? `${d.fallback_count} ` : '';
+    fallback = `<span class="decision-fallback">${esc(count)}fell back to llm (${esc(d.fallback_reason.replace(/_/g, ' '))})</span>`;
+  }
+  return `
+    <div class="decision">
+      <span class="decision-name">${esc(d.decision)}</span>
+      <span class="decision-provider">${esc(d.provider)}</span>
+      <span>${esc(d.result)}</span>
+      <span class="decision-meta">${esc(meta)}</span>
+      ${fallback}
+    </div>`;
+}
+
+/* Only tag the summary line when Jev was involved, so llm mode looks exactly like v1. */
+function providerLabel(decisions) {
+  if (!decisions.some(d => d.provider === 'jev' || d.provider === 'mixed')) return null;
+  const fallbacks = decisions.reduce((n, d) => n + (d.fallback_count ?? (d.fallback_reason ? 1 : 0)), 0);
+  return fallbacks ? `jev, ${fallbacks} fallback${fallbacks > 1 ? 's' : ''}` : 'jev';
 }
 
 function srcLabel(r) {
@@ -442,7 +494,8 @@ async function realQuery(question) {
       docsKept:  data.documents_kept,
       grounded:  data.grounded,
       retries:   data.retry_count,
-      steps:     data.steps ?? []
+      steps:     data.steps ?? [],
+      decisions: data.decisions ?? []
     } : null
   };
 }
@@ -510,6 +563,7 @@ async function loadDocs() {
    MOCK — so you can design against all four states today.
    Delete this whole section once the API is wired.
    ============================================================= */
+/* Mock decision rows below are illustrative values, not measurements. */
 async function mockQuery(q, turn) {
   const lower = q.toLowerCase();
   const wait = async (ms, step) => { turn.step = step; renderThread(); await new Promise(r => setTimeout(r, ms)); };
@@ -524,7 +578,10 @@ async function mockQuery(q, turn) {
         { name: 'route', detail: 'needs live information → web search' },
         { name: 'web search', detail: '3 results from Tavily' },
         { name: 'generate', detail: 'answered from search results' },
-        { name: 'grounding check', detail: 'passed' }]}};
+        { name: 'grounding check', detail: 'passed' }],
+        decisions: [
+          { decision: 'route',  provider: 'jev', result: 'web_search', confidence: 1, latency_ms: 480 },
+          { decision: 'verify', provider: 'jev', result: 'grounded, answers', latency_ms: 690 }]}};
   }
 
   if (lower.includes('vector database') || lower.startsWith('hello')) {
@@ -532,7 +589,10 @@ async function mockQuery(q, turn) {
     return { answer: 'A vector database stores text as numerical embeddings so you can search by meaning rather than exact keywords.',
       trace: { route: 'general_knowledge', grounded: true, retries: 0, steps: [
         { name: 'route', detail: 'no lookup needed → answer directly' },
-        { name: 'generate', detail: 'answered from model knowledge' }]}};
+        { name: 'generate', detail: 'answered from model knowledge' }],
+        decisions: [
+          { decision: 'route',  provider: 'llm', result: 'general_knowledge', latency_ms: 2600, fallback_reason: 'low_confidence' },
+          { decision: 'verify', provider: 'jev', result: 'answers', latency_ms: 450 }]}};
   }
 
   if (!docs.length) {
@@ -556,7 +616,11 @@ async function mockQuery(q, turn) {
       { name: 'grade documents', detail: '2 relevant, 2 dropped' },
       { name: 'generate', detail: 'answered from 2 chunks' },
       { name: 'grounding check', detail: 'passed' },
-      { name: 'answer check', detail: 'passed' }]}};
+      { name: 'answer check', detail: 'passed' }],
+      decisions: [
+        { decision: 'route',  provider: 'jev',   result: 'documents', confidence: 0.98, latency_ms: 780 },
+        { decision: 'grade',  provider: 'mixed', result: '2/4 kept', latency_ms: 3900, fallback_reason: 'rate_limited', fallback_count: 1 },
+        { decision: 'verify', provider: 'jev',   result: 'grounded, answers', latency_ms: 720 }]}};
 }
 
 /* =============================================================

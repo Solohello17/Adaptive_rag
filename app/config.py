@@ -50,6 +50,28 @@ class Settings(BaseSettings):
     RETRIEVAL_DOCS_PER_QUERY: int = 4
     RETRIEVAL_CHUNKS_PER_DOC: int = 3
 
+    # v2.0 decision layer. DECISION_PROVIDER picks who makes the route / grade /
+    # verify decisions: "llm" (the v1 path, unchanged) or "jev" (TypeSafe Jev via
+    # the Vercel AI Gateway, falling back to the LLM per decision). Generation
+    # always stays on the LLM. See docs/v2-jev/02-design.md.
+    APP_VERSION: str = "2.0.0"
+    DECISION_PROVIDER: str = "llm"
+    AI_GATEWAY_API_KEY: Optional[str] = None
+    JEV_BASE_URL: str = "https://ai-gateway.vercel.sh/typesafe"
+    JEV_MODEL: str = "typesafe-ai/jev"
+    JEV_TIMEOUT_SECONDS: float = 10
+    # Chunks graded at once. Kept low to stay inside free-tier rate limits.
+    JEV_MAX_CONCURRENCY: int = 3
+    # Thresholds are starting guesses, not measured. Tune from the Phase 5 eval.
+    JEV_ROUTE_MIN_CONFIDENCE: float = 0.6
+    JEV_GRADE_THRESHOLD: float = 0.5
+    JEV_VERIFY_THRESHOLD: float = 0.5
+    # Character guard for Jev's reported ~32k-token state limit (roughly 4
+    # characters per token in English). Longer states skip Jev and use the LLM.
+    JEV_MAX_STATE_CHARS: int = 60000
+    JEV_FALLBACK_TO_LLM: bool = True
+    JEV_LOG_DECISIONS: bool = True
+
     class Config:
         env_file = ".env"
 

@@ -1,6 +1,7 @@
 import os
 import io
 import logging
+import uuid
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -20,6 +21,8 @@ from app.database import (
 from app.config import settings
 from app.llm import get_embeddings
 from app.graph import rag_app
+from app.decisions.factory import get_decision_provider
+from app.decisions.decision_log import request_id_var
 
 # Uvicorn only configures handlers for its own loggers, so without this our
 # app.* INFO/DEBUG lines are silently dropped. Root stays at WARNING, which
@@ -39,6 +42,9 @@ async def startup_event():
     # Load the embedding model now so the first query doesn't pay the ~6-13s load.
     get_embeddings()
     print("Startup: Qdrant collections checked/initialized.")
+    # Build the decision provider now so a bad DECISION_PROVIDER setup (e.g. jev
+    # without AI_GATEWAY_API_KEY) stops the server at boot, not on the first query.
+    print(f"Startup: decision provider = {get_decision_provider().name}")
 
 @app.post("/rag/documents/upload")
 async def upload_document(
@@ -149,6 +155,15 @@ class Step(BaseModel):
     name: str
     detail: str
 
+class DecisionSummary(BaseModel):
+    decision: str                           # route | grade | verify
+    provider: str                           # jev | llm | mixed (grade only: some chunks fell back)
+    result: str
+    confidence: Optional[float] = None
+    latency_ms: float
+    fallback_reason: Optional[str] = None
+    fallback_count: Optional[int] = None    # grade only
+
 class QueryResponse(BaseModel):
     answer: str
     route: str
@@ -158,12 +173,16 @@ class QueryResponse(BaseModel):
     retry_count: int
     failed: bool
     steps: List[Step]
+    # v2, additive: who made each route / grade / verify decision. Every field above is unchanged.
+    decisions: Optional[List[DecisionSummary]] = None
 
 @app.post("/query", response_model=QueryResponse)
 async def query_graph(request: QueryRequest):
     """
     Execute the LangGraph workflow to retrieve context and generate an answer.
     """
+    # Ties this query's decision logs together in MongoDB.
+    request_token = request_id_var.set(str(uuid.uuid4()))
     try:
         initial_state = {"question": request.question}
         result = rag_app.invoke(initial_state)
@@ -187,10 +206,13 @@ async def query_graph(request: QueryRequest):
             grounded=result.get("grounded"),
             retry_count=retry_count,
             failed=failed,
-            steps=[Step(**s) for s in result.get("steps", [])]
+            steps=[Step(**s) for s in result.get("steps", [])],
+            decisions=[DecisionSummary(**d) for d in result.get("decisions", [])],
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error executing graph: {str(e)}")
+    finally:
+        request_id_var.reset(request_token)
 
 # Mount static files (must be after API routes)
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
