@@ -1,5 +1,20 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env into os.environ once, before Settings() is built. The search
+# walks upward from this file rather than the current working directory, so
+# the same .env is found no matter where the server or a script is started
+# from. (dotenv's own find_dotenv() falls back to the working directory under
+# `python -c` and REPLs, so it isn't used here.) Loading into os.environ, not
+# just into Settings, matters because provider SDKs like ChatGroq read their
+# API keys from there directly. Existing environment variables take
+# precedence over .env values.
+for _directory in Path(__file__).resolve().parents:
+    if (_directory / ".env").is_file():
+        load_dotenv(_directory / ".env")
+        break
 
 class Settings(BaseSettings):
     # Provider Selection
@@ -49,8 +64,5 @@ class Settings(BaseSettings):
     # many chunks to take from each of those documents.
     RETRIEVAL_DOCS_PER_QUERY: int = 4
     RETRIEVAL_CHUNKS_PER_DOC: int = 3
-
-    class Config:
-        env_file = ".env"
 
 settings = Settings()

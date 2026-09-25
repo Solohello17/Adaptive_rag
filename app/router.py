@@ -2,10 +2,6 @@ import os
 from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
-from dotenv import load_dotenv
-
-# Load environment variables (useful for standalone execution)
-load_dotenv()
 
 # We only import the factory function, keeping the provider abstracted
 from app.llm import get_llm

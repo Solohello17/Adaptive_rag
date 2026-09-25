@@ -154,9 +154,6 @@ def grade_answer(question: str, generation: str) -> str:
     return result.binary_score
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-    
     print("Testing Grader...")
     
     # Relevant pair
