@@ -55,3 +55,9 @@ Short, dated entries. Newest at the bottom.
 - Regression check passed: `llm` mode matched the v1 baseline in every category.
 - Jev routed 37 of 40 correctly against 38 for the LLM, and was 3 to 6 times faster per route and verify decision. By the rule set before the results, v2.0 ships with the LLM as default and Jev as opt-in.
 - Most useful findings: 23 fallbacks were 503s from the early-access service, all absorbed; Jev grades leniently (keeps 73% of chunks against 39%) but judges grounding more strictly; and it scores correct refusals as "does not answer". The confidence threshold also stopped a prompt injection from steering the route.
+
+## 25 Sept 2026: Phase 6, release
+
+- Shipped v2.0.0 with `DECISION_PROVIDER=llm` as the default and Jev as opt-in, as the release rule decided.
+- Wrote the CHANGELOG, a "What's new in v2.0" section in the README (and fixed its stale Streamlit instructions), the release notes, and one post draft per phase.
+- Future work is listed in `05-release-notes.md`, led by a held-out question set for tuning, since tuning on the same 40 questions would overfit.

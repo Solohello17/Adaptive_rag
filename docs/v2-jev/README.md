@@ -9,7 +9,7 @@ v2.0 adds Jev, a "System One" judgment model by [TypeSafe AI](https://docs.types
 | [02-design.md](02-design.md) | Architecture, diagrams, question specs, settings, log schema | System design | Approved |
 | [03-implementation-log.md](03-implementation-log.md) | Per step: what, why, files, commit | Implementation | Phase 4 done |
 | [04-testing-and-evaluation.md](04-testing-and-evaluation.md) | Test case table and evaluation results | Testing | Approved |
-| 05-release-notes.md | What shipped and the default we chose | Conclusion and future scope | Not started |
+| [05-release-notes.md](05-release-notes.md) | What shipped and the default we chose | Conclusion and future scope | Done |
 | [build-log.md](build-log.md) | Short dated entries | (appendix) | Ongoing |
-| posts/ | Build-in-public post drafts, one per phase | (appendix) | Not started |
-| assets/ | Screenshots and charts | (figures) | Empty |
+| [posts/](posts/README.md) | Build-in-public post drafts, one per phase | (appendix) | Drafts ready |
+| [assets/](assets/README.md) | Screenshots (result charts are in `results/eval/charts/`) | (figures) | Waiting for screenshots |

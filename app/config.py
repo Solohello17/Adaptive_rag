@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # verify decisions: "llm" (the v1 path, unchanged) or "jev" (TypeSafe Jev via
     # the Vercel AI Gateway, falling back to the LLM per decision). Generation
     # always stays on the LLM. See docs/v2-jev/02-design.md.
-    APP_VERSION: str = "2.0.0-dev"
+    APP_VERSION: str = "2.0.0"
     DECISION_PROVIDER: str = "llm"
     AI_GATEWAY_API_KEY: Optional[str] = None
     JEV_BASE_URL: str = "https://ai-gateway.vercel.sh/typesafe"

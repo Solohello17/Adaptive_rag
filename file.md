@@ -30,6 +30,7 @@ Built as a portfolio project. The architecture follows [dhruvsinghal09/Adaptive-
 3. **The static mount must stay last** in `app/main.py`. `app.mount("/", StaticFiles(...))` is a catch-all and will swallow the API routes if registered before them.
 4. **Retry loops must always have a hard cap.** The self-correction edges can cycle; `retry_count` maxes at 2 and then ends regardless of grade results. Never remove this guard.
 5. **Changing the embeddings model requires re-indexing.** Different models produce different vector dimensions, so existing Qdrant vectors become incompatible.
+6. **Decisions go through the decision provider (v2).** The route, grade, and verify nodes call `get_decision_provider()` in `app/decisions/factory.py` and never call the LLM grader/router functions or Jev directly. `DECISION_PROVIDER=llm|jev` picks the provider; Jev falls back to the LLM per decision. Jev is an HTTP client under `app/decisions/`, not a LangChain chat model, so rule 1 still holds. Jev question wording lives in `app/decisions/jev_questions.yaml`.
 
 ## The graph
 
@@ -51,7 +52,7 @@ Every node appends to `state["steps"]` (`{name, detail}`) and prints its name, s
 ## API
 
 - `POST /rag/documents/upload` — file plus `X-Description` header. Chunks, embeds, upserts to Qdrant, writes metadata to MongoDB.
-- `POST /query` — runs the graph. Returns `answer`, `route`, `documents_found`, `documents_kept`, `grounded`, `retry_count`, `failed`, and `steps`.
+- `POST /query` — runs the graph. Returns `answer`, `route`, `documents_found`, `documents_kept`, `grounded`, `retry_count`, `failed`, and `steps`, plus (v2) an optional `decisions` list: one entry per route / grade / verify decision with provider, result, confidence, latency, and fallback reason.
 - `GET /` — the frontend. `GET /docs` — Swagger.
 
 ## Frontend
@@ -75,13 +76,16 @@ Then `http://localhost:8000`.
 
 ## Current state and what's left
 
-Layers 1–3 are built and working (spine, adaptive router with grading and web search, self-correction). Frontend is built and wired.
+Layers 1–3 are built and working (spine, adaptive router with grading and web search, self-correction). Frontend is built and wired. The document grader is batched (one LLM call for all chunks), and Groq and OmniRoute are in the provider factory.
+
+**v2.0 (tag `v2.0.0`)** adds the swappable decision layer with Jev, per-decision fallback, decision logs in MongoDB, the `decisions` API field and UI rows, 66 offline tests (`python -m pytest`), and an evaluation. Default is `DECISION_PROVIDER=llm`; Jev is opt-in. Everything about v2 is in `docs/v2-jev/`, and the changes are in `CHANGELOG.md`.
 
 Remaining:
-- [ ] Add Ollama and/or Groq to the provider factory for free local/high-volume inference. Machine is an RTX 4060 (8GB VRAM), so 7–8B models run fine locally.
+- [ ] Add Ollama to the provider factory for free local inference. Machine is an RTX 4060 (8GB VRAM), so 7–8B models run fine locally.
 - [ ] Verify structured output reliability on any new provider — the router and graders depend entirely on constrained `Literal` outputs, and smaller models are weaker at this. Test with the standalone `__main__` blocks in `app/router.py` and `app/grader.py` before running the full graph.
-- [ ] **Batch the document grader.** It currently fires one LLM call per retrieved chunk. Send all chunks in a single call returning a list of verdicts — biggest remaining efficiency win.
-- [ ] README polish, architecture diagram, demo recording.
+- [ ] v2.1: tune Jev on a new held-out question set (retry once on 503, allow correct refusals in the answer check, stricter grade threshold). See `docs/v2-jev/05-release-notes.md`.
+- [ ] Known v1 issues K1 to K4 (`docs/v2-jev/01-requirements.md`), e.g. the `?` input crashing the router.
+- [ ] Architecture diagram, demo recording.
 
 ## Working style
 
