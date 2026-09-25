@@ -1,5 +1,20 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env into os.environ once, before Settings() is built. The search
+# walks upward from this file rather than the current working directory, so
+# the same .env is found no matter where the server or a script is started
+# from. (dotenv's own find_dotenv() falls back to the working directory under
+# `python -c` and REPLs, so it isn't used here.) Loading into os.environ, not
+# just into Settings, matters because provider SDKs like ChatGroq read their
+# API keys from there directly. Existing environment variables take
+# precedence over .env values.
+for _directory in Path(__file__).resolve().parents:
+    if (_directory / ".env").is_file():
+        load_dotenv(_directory / ".env")
+        break
 
 class Settings(BaseSettings):
     # Provider Selection
@@ -11,6 +26,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
+    # An alias Google keeps pointed at the current Flash model, so it doesn't
+    # get retired the way pinned IDs like gemini-2.5-pro did. Pro models have
+    # no free-tier quota.
+    GEMINI_MODEL: str = "gemini-flash-latest"
     TAVILY_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
     GROQ_MODEL: str = "llama-3.1-8b-instant"
@@ -71,8 +90,5 @@ class Settings(BaseSettings):
     JEV_MAX_STATE_CHARS: int = 60000
     JEV_FALLBACK_TO_LLM: bool = True
     JEV_LOG_DECISIONS: bool = True
-
-    class Config:
-        env_file = ".env"
 
 settings = Settings()
