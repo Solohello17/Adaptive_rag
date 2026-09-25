@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     GOOGLE_API_KEY: Optional[str] = None
+    # An alias Google keeps pointed at the current Flash model, so it doesn't
+    # get retired the way pinned IDs like gemini-2.5-pro did. Pro models have
+    # no free-tier quota.
+    GEMINI_MODEL: str = "gemini-flash-latest"
     TAVILY_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
     GROQ_MODEL: str = "llama-3.1-8b-instant"

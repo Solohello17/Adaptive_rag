@@ -16,7 +16,7 @@ def get_llm(model_type: str = "smart") -> BaseChatModel:
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
         # Ensure you have GOOGLE_API_KEY in your environment
-        return ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0)
+        return ChatGoogleGenerativeAI(model=settings.GEMINI_MODEL, temperature=0)
         
     elif provider == "claude" or provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
