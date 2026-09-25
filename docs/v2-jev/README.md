@@ -8,7 +8,7 @@ v2.0 adds Jev, a "System One" judgment model by [TypeSafe AI](https://docs.types
 | [01-requirements.md](01-requirements.md) | What v2.0 must do, and how v1 decides today | Requirements analysis | Approved |
 | [02-design.md](02-design.md) | Architecture, diagrams, question specs, settings, log schema | System design | Approved |
 | [03-implementation-log.md](03-implementation-log.md) | Per step: what, why, files, commit | Implementation | Phase 4 done |
-| 04-testing-and-evaluation.md | Test case table and evaluation results | Testing | Not started |
+| [04-testing-and-evaluation.md](04-testing-and-evaluation.md) | Test case table and evaluation results | Testing | Approved |
 | 05-release-notes.md | What shipped and the default we chose | Conclusion and future scope | Not started |
 | [build-log.md](build-log.md) | Short dated entries | (appendix) | Ongoing |
 | posts/ | Build-in-public post drafts, one per phase | (appendix) | Not started |

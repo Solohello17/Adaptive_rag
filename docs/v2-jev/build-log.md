@@ -47,3 +47,11 @@ Short, dated entries. Newest at the bottom.
 - Every decision now lands in MongoDB with its provider, latency, tokens, cost, and fallback reason, tied together by a per-query id. A test proved the id survives LangGraph's node execution, which I would otherwise have had to assume.
 - `/query` returns a `decisions` list next to the unchanged v1 fields, and the UI trace shows who made each call and when Jev handed one back to the LLM.
 - Gate passed: 66 tests in both modes, and a real end-to-end query answered correctly in both, with 10 decision logs each.
+
+## 25 Sept 2026: Phase 5, evaluation
+
+- Rewrote the eval script for v2 and caught my own measurement bug in the smoke test: the node-level timings included the shadow LLM call, which would have made Jev's grading look 7 times slower than it was. Timings now come from the provider call itself.
+- Ran all 40 questions with v2 in `llm` mode (the regression check) and in `jev` mode with shadow LLM checks.
+- Regression check passed: `llm` mode matched the v1 baseline in every category.
+- Jev routed 37 of 40 correctly against 38 for the LLM, and was 3 to 6 times faster per route and verify decision. By the rule set before the results, v2.0 ships with the LLM as default and Jev as opt-in.
+- Most useful findings: 23 fallbacks were 503s from the early-access service, all absorbed; Jev grades leniently (keeps 73% of chunks against 39%) but judges grounding more strictly; and it scores correct refusals as "does not answer". The confidence threshold also stopped a prompt injection from steering the route.
